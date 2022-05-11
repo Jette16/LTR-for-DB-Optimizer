@@ -1,0 +1,3 @@
+<AdaptiveJoin BitmapCreator="####BITMAPCREATOR####" Optimized="####OPTIMIZED####">
+####BODY####
+</AdaptiveJoin>

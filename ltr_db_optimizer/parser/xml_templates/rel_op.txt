@@ -1,0 +1,3 @@
+<RelOp AvgRowSize="####AVGROWSIZE####" EstimateCPU="####ESTIMATECPU####" EstimateIO="####ESTIMATEIO####" EstimateRebinds="####ESTIMATEREBINDS####" EstimateRewinds="####ESTIMATEREWINDS####" EstimatedExecutionMode="####ESTIMATEDEXECUTIONMODE####" EstimateRows="####ESTIMATEROWS####"  LogicalOp="####LOGICALOP####" NodeId="####NODEID####" Parallel="####PARALLEL####" PhysicalOp="####PHYSICALOP####" EstimatedTotalSubtreeCost="####ESTIMATEDTOTALSUBTREECOST####">
+####BODY####
+</RelOp>

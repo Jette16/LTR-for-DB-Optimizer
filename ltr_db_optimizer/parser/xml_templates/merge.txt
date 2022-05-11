@@ -1,0 +1,6 @@
+<Merge>
+####INNERSIDEJOINCOLUMNS####
+####OUTERSIDEJOINCOLUMNS####
+####RESIDUAL####
+####BODY####
+</Merge>

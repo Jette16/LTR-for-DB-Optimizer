@@ -1,0 +1,7 @@
+<Hash BitmapCreator="true">
+####DEFINEDVALUES####
+####HASHKEYSBUILD####
+####HASHKEYSPROBE####
+####PROBERESIDUAL####
+####BODY####
+</Hash>

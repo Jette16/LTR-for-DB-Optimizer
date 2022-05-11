@@ -1,0 +1,3 @@
+<ScalarOperator ScalarString="####SCALARSTRING####">
+####BODY####
+</ScalarOperator>

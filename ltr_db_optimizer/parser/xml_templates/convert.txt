@@ -1,0 +1,3 @@
+<Convert DataType="####DATATYPE####" Precision="####PRECISION####" Scale="####SCALE####" Style="####STYLE####" Implicit="####IMPLICIT####">
+####BODY####
+</Convert>

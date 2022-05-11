@@ -1,0 +1,3 @@
+<OuterSideJoinColumns>
+####BODY####
+</OuterSideJoinColumns>

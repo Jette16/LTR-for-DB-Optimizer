@@ -1,0 +1,3 @@
+<Aggregate AggType="####AGGTYPE####" Distinct="####DISTINCT####">
+####BODY####
+</Aggregate>
