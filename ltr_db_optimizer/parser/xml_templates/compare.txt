@@ -1,0 +1,3 @@
+<Compare CompareOp="####COMPAREOP####">
+####BODY####
+</Compare>

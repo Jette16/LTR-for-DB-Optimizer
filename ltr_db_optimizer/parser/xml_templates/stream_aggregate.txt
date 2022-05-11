@@ -1,0 +1,5 @@
+<StreamAggregate>
+####DEFINEDVALUES####
+####GROUPBY####
+####BODY####
+</StreamAggregate>

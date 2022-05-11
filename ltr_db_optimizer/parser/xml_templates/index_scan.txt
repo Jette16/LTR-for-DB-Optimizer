@@ -1,0 +1,4 @@
+<IndexScan Ordered="####ORDERED####" ScanDirection="####SCANDIRECTION####">
+####BODY####
+<Object Database="####DATABASE####" Schema="####SCHEMA####" Table="####TABLE####" Index="####INDEX####" Alias="####ALIAS####" IndexKind="####INDEXKIND####" Storage="####STORAGE####" />####SEEK####
+</IndexScan>

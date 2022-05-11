@@ -1,0 +1,3 @@
+<Intrinsic FunctionName="####FUNCTIONNAME####">
+####BODY####
+</Intrinsic>

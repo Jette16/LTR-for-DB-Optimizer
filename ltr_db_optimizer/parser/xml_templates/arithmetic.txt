@@ -1,0 +1,3 @@
+<Arithmetic Operation="####OPERATION####">
+####BODY####
+</Arithmetic>

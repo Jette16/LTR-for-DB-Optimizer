@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-16"?>
+<ShowPlanXML xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" Version="1.539" Build="15.0.2080.9" xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan">
+<BatchSequence>
+<Batch>
+<Statements>
+<StmtSimple>
+<QueryPlan>
+####BODY####            
+</QueryPlan>
+</StmtSimple>
+</Statements>
+</Batch>
+</BatchSequence>
+</ShowPlanXML>

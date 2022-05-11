@@ -1,0 +1,8 @@
+<Hash>
+####DEFINEDVALUES####
+####HASHKEYSBUILD####
+####HASHKEYSPROBE####
+####BUILDRESIDUAL####
+####PROBERESIDUAL####
+####BODY####
+</Hash>
