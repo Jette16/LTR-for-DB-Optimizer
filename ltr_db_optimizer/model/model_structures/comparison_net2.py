@@ -4,8 +4,6 @@ from ltr_db_optimizer.ext.TreeConvolution.tcnn import BinaryTreeConv, TreeLayerN
 from ltr_db_optimizer.model.featurizer_dict import get_right_child, get_left_child, get_features
 from ltr_db_optimizer.ext.TreeConvolution.util_feature import prepare_trees
 
-# This code snippet was mostly extracted, with some renaming from: 
-# https://github.com/learnedsystems/BaoForPostgreSQL/blob/master/bao_server/net.py
 class LTRComparisonNet(torch.nn.Module):
     def __init__(self, in_dim_1, in_dim_2):
         super(LTRComparisonNet, self).__init__() 
@@ -74,32 +72,42 @@ class LTRComparisonNet(torch.nn.Module):
             torch.nn.Linear(16,1)
         )
 
-    #def get_input_channels(self):
-    #    return self.input_channels
     
     def forward(self, query_enc, sample_trees):
         assert len(sample_trees) > 1
-        query_enc = torch.Tensor(query_enc)#*len(sample_trees))#.unsqueeze(1).repeat(1,len(sample_trees))
+        # Calculate the query encoding
+        query_enc = torch.Tensor(query_enc)
         query = self.query_net(query_enc)
+        
+        # Prepare trees and get the vectors for every tree for both sub-networks
         trees = prepare_trees(sample_trees, get_features, get_left_child, get_right_child, query)
-        objects = self.object_net(trees)#.repeat(1,len(sample_trees))
+        objects = self.object_net(trees)
         comparisons = self.comparison_net(trees)        
+        
+        # Matrix operations on comparison networks
         comparison_sums = torch.sum(comparisons, 0) - comparisons
         comparison_sums = comparison_sums/(comparison_sums.shape[0])
+        
+        # Concat the vectors and insert them into final net
         with_query_enc = torch.cat((objects, comparison_sums),1) 
         return self.output_net(with_query_enc)
         
     def predict_all(self, query_enc, sample_trees):
         assert len(sample_trees) > 1
-        query_enc = torch.Tensor(query_enc)#*len(sample_trees))#.unsqueeze(1).repeat(1,len(sample_trees))
+        # Calculate the query encoding
+        query_enc = torch.Tensor(query_enc)
         query = self.query_net(query_enc)
-        #query_enc = torch.Tensor([query_enc]*len(sample_trees))#.unsqueeze(1).repeat(1,len(sample_trees))
+        
+        # Prepare trees and get the vectors for every tree for both sub-networks
         trees = prepare_trees(sample_trees, get_features, get_left_child, get_right_child, query)
-        objects = self.object_net(trees)#.repeat(1,len(sample_trees))
+        objects = self.object_net(trees)
         comparisons = self.comparison_net(trees) 
-        #print(comparisons)
+        
+        # Matrix operations on comparison networks
         comparison_sums = torch.sum(comparisons, 0) - comparisons 
         comparison_sums = comparison_sums/(comparison_sums.shape[0])
+        
+        # Concat the vectors and insert them into final net
         with_query_enc = torch.cat((objects, comparison_sums),1) 
         return self.output_net(with_query_enc)
     

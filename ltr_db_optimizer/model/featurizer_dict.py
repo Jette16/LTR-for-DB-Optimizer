@@ -22,53 +22,12 @@ class FeatureExtractor:
         self.small_version = small_version
         if with_cost:
             self.vector_length += 1# changed: 2 # for estimated subtree cost and estimated rows
-        
-    def featurize_query(self, job, rows, small=False):
-        # orderby, group_by, nr_joins, tables_used, estimated_rows, group_by, max. relation, min relation, nr_filters, nr_columns
-        v = [0,0,0,rows]
-        if self.small_version or small:
-            if "WHERE_JOIN" in job:
-                v[2] = len(job["WHERE_JOIN"])
-            if "GROUP BY" in job:
-                v[1] = 1.0
-            if "ORDER BY" in job:
-                v[0] = 1.0
-            return v
-        with open("./datafarm/output_jobs/"+job+".pickle", "rb") as f:
-            query_dict = pickle.load(f)
-        if "WHERE_JOIN" in query_dict:
-            v[2] = float(len(query_dict["WHERE_JOIN"]))
-        if "GROUP BY" in query_dict:
-            v[1] = 1.0
-        if "ORDER BY" in query_dict:
-            v[0] = 1.0
-        return v
     
-    def featurize_query_long(self, job, rows, small=False):
-        # old: orderby, group_by, nr_joins, tables_used, estimated_rows, max. relation, min relation, nr_filters, nr_columns
+    def featurize_query(self, job, rows, folder="./datafarm/output_jobs/"):
         # new: orderby, group_by, nr_joins, estimated_rows, max. relation, min relation
-        #v = [0,0,0,0,0,0,0,0,0]
         v = [0,0,0,0,0,0]
-        if self.small_version or small:
-            if "WHERE_JOIN" in job:
-                v[2] = len(job["WHERE_JOIN"])
-            if "GROUP BY" in job:
-                v[1] = 1.0
-            if "ORDER BY" in job:
-                v[0] = 1.0
-            #v[3] = len(job["FROM"])
-            v[3] = rows # 4
-            for rel in job["FROM"]:
-                row_c = table_info.get_table(rel.split(".")[-1].lower()).row_count
-                if row_c > v[4]:
-                    v[4] = row_c
-                if row_c < v[5] or v[5] == 0:
-                    v[5] = row_c
-            #if "WHERE" in job:
-            #    v[7] = len(job["WHERE"])
-            return v
         
-        with open("./datafarm/output_jobs/"+job+".pickle", "rb") as f:
+        with open(folder+job+".pickle", "rb") as f:
             job = pickle.load(f)
         if "WHERE_JOIN" in job:
             v[2] = len(job["WHERE_JOIN"])
@@ -76,8 +35,7 @@ class FeatureExtractor:
             v[1] = 1.0
         if "ORDER BY" in job:
             v[0] = 1.0
-        #v[3] = len(job["FROM"])
-        v[3] = rows # 4
+        v[3] = rows 
         for rel in job["FROM"]:
             row_c = table_info.get_table(rel.split(".")[-1].lower()).row_count
             if row_c > v[4]:
@@ -87,7 +45,11 @@ class FeatureExtractor:
             
         return v
             
-    def featurize_plan(self, plan):
+    def featurize_plan(self, plan: dict):
+        """
+        Featurize plan in form of a dictionary to tree-shaped form for using it in Tree Convolution Layer.
+        Recursive approach.
+        """
         operation = plan["operator"] 
         none_child = np.zeros(self.vector_length)
         none_child[self.type_vector.index("null")] = 1
@@ -100,22 +62,29 @@ class FeatureExtractor:
             # If it is not in type vector, there should also be only one child
             return self.featurize_plan(plan["children"][0])
         if self.with_cost:
-            # insert cost here
-            this_vector[-1] = plan["EstimateRows"] # changed: -2
+            this_vector[-1] = plan["EstimateRows"] 
             rows = plan["EstimateRows"]
-            #this_vector[-1] = plan["EstimatedTotalSubtreeCost"]
+            
         # test length of children (2,1,0)
         if len(plan["children"]) == 2:
+            # Called for joins
             left_child,_ = self.featurize_plan(plan["children"][0])
             right_child,_ = self.featurize_plan(plan["children"][1])
         elif len(plan["children"]) == 1:
+            # Called for sorts and aggregations
             left_child,_ = self.featurize_plan(plan["children"][0])
             right_child = none_child
         else:
+            # Called for scans
             return (this_vector, none_child, none_child), rows
+        
         return (this_vector, left_child, right_child), rows
     
     def match_cost_plan(self, execution_plan, cost_plan):
+        """
+        For an execution plan (Python dict) and a cost plan (xml, extracted from SQL Server),
+        insert the estimated number of rows into the plan.
+        """
         cost_parts = cost_plan.split("<")
         parts_cost = []
         
@@ -128,14 +97,17 @@ class FeatureExtractor:
                         sub_parts_cost.append(("PhysicalOp", sub_parts[idx+1]))
                     if "EstimateRows" in sub:
                         sub_parts_cost.append(("EstimateRows",float(sub_parts[idx+1])))
-                    if "EstimatedTotalSubtreeCost" in sub:
-                        sub_parts_cost.append(("EstimatedTotalSubtreeCost",float(sub_parts[idx+1])))
                 parts_cost.append(sub_parts_cost)
 
         extended_plan, _ = self.append_features(execution_plan, parts_cost)
         return extended_plan
     
     def append_features(self, execution_plan, label_parts):
+        """
+        Here, the estimated rows are inserted into the correct child as part of its dictionary.
+        Mostly, this function deals with some SQL Server's logic.
+        """
+        
         if not(execution_plan["operator"] == "top" and execution_plan["children"][0]["operator"] == "sort"):
             curr_part = label_parts[0]
             not_compute_scalar = True
@@ -154,6 +126,10 @@ class FeatureExtractor:
 
     
 def get_features_with_cost_from_folder(plans_folder, cost_folder, return_featurized=True):
+    """
+    Expects a folder with XML plans (cost_folder) and a folder with execution plans (plans_folder)
+    and appends the cost to the respective plan. Additionally, it featurizes the plans.
+    """
     feature_ext = FeatureExtractor()
     
     featurized_trees = {}
@@ -173,8 +149,8 @@ def get_features_with_cost_from_folder(plans_folder, cost_folder, return_featuri
                 with open(plans_folder+"/"+job_nr+"/"+version_nr+".pickle", "rb") as d:
                     execution_plan = pickle.load(d)
             except:
-                #print(f"Problems finding plan for {file}")
                 continue
+                
             full_execution_plan = feature_ext.match_cost_plan(execution_plan, cost_plan)
 
             if return_featurized:
@@ -187,51 +163,75 @@ def get_features_with_cost_from_folder(plans_folder, cost_folder, return_featuri
             
     return featurized_vecs, featurized_trees
 
-def featurize_with_labels(plans_folder, cost_folder, label_csv, max_score = 50, score_function = "special", extra_for_min = True, special_border = 0.95, normalize = True):
+def featurize_with_labels(
+    plans_folder, 
+    cost_folder, 
+    label_csv, 
+    max_score = 50, 
+    score_function = "special",
+    extra_for_min = True, 
+    special_border = 0.95, 
+    normalize = True,
+    job_column = "Unnamed: 0.1",
+):
+    """
+    Featurizes the execution plans and calculates the labels for the plans.
+    """
+    # Featurize the plans
     featurized_vecs, featurized_trees = get_features_with_cost_from_folder(plans_folder, cost_folder)
+    
     label_dict = {}
-    
-    df = pd.read_csv(label_csv, index_col = 0)
-    df["Job_nr"] = df["Unnamed: 0.1"].apply(lambda x: x.split("_")[0])
-    
     times = []
+        
+    df = pd.read_csv(label_csv, index_col = 0)
+    # Get the number of the job (current column is "Job0v0_1" with "1" being the ID of the execution plan version)
+    df["Job_nr"] = df[job_column].apply(lambda x: x.split("_")[0])
     
+    # Iterate over every Job Number
     for job in pd.unique(df["Job_nr"]):
         temp_df = df[df["Job_nr"]==job].copy()
         a = np.array(temp_df["Sum"])
+        
+        # When dealing with the special score function
+        # Calculate the factor for each run time --> result is in [1,+inf)
         if score_function == "special":
             temp = df[df["Job_nr"] == job]
             labels = temp.index
             x = np.array(temp["CPU time"], dtype=np.dtype(float))
             if len(x) == 0:
                 continue
-            #x[x<0] = np.max(x) * 2
-            if np.min(x[x>=0]) != 0:
+            if np.min(x[x>=0]) != 0: # do not regard queries that throw a timeout for calculating the minimum
                 x[x>=0] = x[x>=0]/np.min(x[x>=0])
             else:
-                x = x + 1
+                # if the minimum is at 0 ms, use x+1 as factors
+                x = x + 1 
             times.extend(list(zip(labels,x)))
         else:
             if score_function == "linear":
-                a[a==-2] = max(a)*2 # Necessary, otherwise min(a) == -2
+                a[a<0] = max(a)*10 # Set timeout queries to a value higher 0 
                 temp_df["scores"] = calculate_linear_scores(a, n = max_score)
             for idx, row in temp_df.iterrows():
                 label_dict[idx] = row["scores"]
+    # perform agglomerative clustering to get scores
     if score_function == "special":
         labels, scores = calculate_special_score(times, max_score, special_border)
         for idx, s in enumerate(scores):
             label_dict[labels[idx]] = s
+            
+    # perform normalization
     if normalize:
         featurized_vecs, featurized_trees, label_dict = normalization(featurized_vecs, featurized_trees, label_dict)
-        
-        
     return featurized_vecs, featurized_trees, label_dict
 
 def normalization(featurized_vecs, featurized_trees, label_dict):
+    """
+    Function for normalizing the feature vectors of query and plan encoding as well as scores
+    """
+    
     labels_min = float(min(label_dict.values()))
     labels_max = float(max(label_dict.values()))
     
-    # only last col in vector for trees needs to be modified
+    # only last col in vector for trees needs to be modified, rest is already one-hot-encoded
     tree_high = 0
     tree_low = 0
     
@@ -245,7 +245,6 @@ def normalization(featurized_vecs, featurized_trees, label_dict):
     
     min_vec = np.array(min_vec)
     max_vec = np.array(max_vec)
-    #print(min_vec, max_vec, tree_high, tree_low)
     for key in label_dict.keys():
         label_dict[key] = calculate_normalize(label_dict[key], labels_min, labels_max)
         featurized_vecs[key] = list(calculate_normalize(np.array(featurized_vecs[key]), min_vec, max_vec))
@@ -257,6 +256,10 @@ def calculate_normalize(x, minimum, maximum):
     return (x - minimum) / (maximum - minimum)
 
 def find_vector_high_low(vector, min_vec, max_vec):
+    """
+    Check if any value in current vector as a higher/lower value than the min or max vec.
+    Change it accordingly.
+    """
     for i in range(3,len(min_vec)):
         if vector[i] < min_vec[i] or min_vec[i] == 0:
             min_vec[i] = vector[i]
@@ -266,6 +269,10 @@ def find_vector_high_low(vector, min_vec, max_vec):
 
 
 def find_tree_high_low(tree, tree_high, tree_low):
+    """
+    Find the highest and lowest number of estimated rows in this tree and check if that number is
+    higher of lower than tree_high/tree_low
+    """
     if len(tree) == 3:
         tree_high, tree_low = find_tree_high_low(tree[1], tree_high, tree_low)
         tree_high, tree_low = find_tree_high_low(tree[2], tree_high, tree_low)
@@ -285,6 +292,9 @@ def find_tree_high_low(tree, tree_high, tree_low):
 
 
 def normalize_tree(tree, minimum, maximum):
+    """
+    Recursive function for normalizing the tree
+    """
     if len(tree) == 3:
         curr = tree[0]
         curr[-1] = calculate_normalize(curr[-1], minimum, maximum)
@@ -297,10 +307,12 @@ def normalize_tree(tree, minimum, maximum):
 
 
 def calculate_special_score(scores, n, border_value):
+    """
+    Calculate the special scores using Agglomerative clustering. With pruning values above border.
+    """
     s = np.array([s[1] for s in scores])
-    #border = np.quantile(s[s >= 0], border_value)
+    # Get quantile and set value higher than this value to it
     border = np.quantile(s[s > 1], border_value)
-    print(border)
     times = []
     for s in scores:
         if s[1] > border or s[1] < 0:
@@ -309,8 +321,12 @@ def calculate_special_score(scores, n, border_value):
             times.append(s[1])
     times = np.array(times)
     temp = times[times > 1]
+    
+    # Perform agglomerative clustering
     labels = AgglomerativeClustering(n_clusters=n).fit_predict(temp.reshape(-1,1))
     maxima = [np.min(temp[np.where(labels == i)]) for i in range(n)]
+    
+    # Get the scores of every cluster
     sort = np.concatenate((np.array([border+1]),np.sort(maxima)[::-1],np.array([0])))
     result = np.digitize(times,sort)
     return [s[0] for s in scores], result

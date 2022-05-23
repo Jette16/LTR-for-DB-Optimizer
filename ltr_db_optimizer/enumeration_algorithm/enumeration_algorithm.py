@@ -21,7 +21,7 @@ class EnumerationAlgorithm(DPccp):
         self.table_info = table_info
         self.aggregator = Aggregator(sql_query, self.joiner, self.table_info.database == "imdb")
         
-        self.connection = 'DSN=jettesDSN;Trusted_Connection=yes;'
+        self.connection = 'dummyConnection' # see https://github.com/mkleehammer/pyodbc/wiki/Drivers-and-Driver-Managers#connecting-to-a-database
         self.saved_rows = {}
         self.featurizer = FeatureExtractorGraph()
         
@@ -29,32 +29,32 @@ class EnumerationAlgorithm(DPccp):
         self.alias_dict = alias_dict
         
     def find_best_plan(self):
+        # Check if there is a subquery in our regular query, call a new instance and handle the subquery first
         if not self.regard_subquery:
             if self.sql_query["Subquery"] is not None:
-                # pretty ugly, can be changed hopefully
                 sub_enum = EnumerationAlgorithm(self.sql_query["Subquery"], self.table_info,
                                                 self.path, "", self.top_k, self.alias_dict)
                 sub_enum.regard_subquery = True
                 self.best_subquery = sub_enum.find_best_plan()
                 self.joiner.set_subquery(self.best_subquery)
+                
+        # only start enumeration if we have at least one join
         if len(self.sql_query["Joins"]) > 0:
             best_plan = self.enumerate(name_in_data=True)
         else:
             assert len(self.sql_query["Tables"]) == 1
             best_plan = self.joiner.get_scan(self.sql_query["Tables"][0][0])
-            
+        
+        # add aggregations, sorts and top statements
         best_plan = self.add_additional_nodes(best_plan)
         
         if self.regard_subquery:
             return best_plan
         
+        # reduce the final plans to one plan
         best_plan = self.reduce(best_plan, True)[0]
         return self.to_xml(best_plan)
         
-    def best_plan_to_xml(self, plan):
-        plan = self.resolve_output_columns(plan)
-        parser = XMLParser()
-        return parser.generate_from_graph(plan)
         
     def to_bfs_graph(self):
         """
@@ -70,7 +70,8 @@ class EnumerationAlgorithm(DPccp):
         
     def add_additional_nodes(self, best_plans):
         temp_result = []
-                
+        
+        # add aggregates if needed
         for plan in best_plans:
             if self.aggregator.has_aggregate():
                 best_plan = self.aggregator.add_aggregate(plan)
@@ -79,10 +80,13 @@ class EnumerationAlgorithm(DPccp):
                 temp_result.append(plan)
         
         result = []
+        
+        # append sorts and top statements if needed
         for plan in temp_result:
             best_plan = plan
             if len(self.sql_query["Sort"]):
                 plan.query_encoding[0] = 1
+                # check if it is already sorted or if the whole table has only one row --> no sort needed
                 if ((not all([o[1] in best_plan.sorted_columns for o in self.sql_query["Sort"]]) and
                     not all([self.joiner.is_restricted(s[1]) for s in self.sql_query["Sort"]])) or 
                     any([s[0] == "desc" for s in self.sql_query["Sort"]])
@@ -96,11 +100,14 @@ class EnumerationAlgorithm(DPccp):
                     best_plan = nodes.SortNode(columns, ascending, name = "sort", left_child = best_plan,
                                                is_sorted = True, contained_tables = best_plan.contained_tables,
                                                sorted_columns = columns)
+            # Insert a top node if there is a top statement in the query
             if self.sql_query["Top"] is not None:
                 best_plan = nodes.TopNode(self.sql_query["Top"], name = "top", left_child = best_plan,
                                            is_sorted = best_plan.is_sorted, contained_tables = best_plan.contained_tables,
                                            sorted_columns = best_plan.sorted_columns)
             result.append(best_plan) 
+        # somehow, SQL Server seems to have problems with the batch mode, which is why we change all execution modes to row mode
+        # This should be investigated more
         if self.table_info.database == "imdb":
             temp_result = []
             for plan in result:
@@ -109,6 +116,9 @@ class EnumerationAlgorithm(DPccp):
         return result
     
     def resolve_output_columns(self, plan, output_columns=None, sort = False):
+        """
+        For the XML, find the output columns of every node
+        """
         if output_columns is None:
             output_columns = []
             for s in self.sql_query["Select"]:
@@ -165,6 +175,7 @@ class EnumerationAlgorithm(DPccp):
         return plan
         
     def prepare_plans(self, plans, last = False):
+        # get the SQL of the subplan and get the plan encoding of the trees 
         if last:
             sql = self.sql_text            
         else:
@@ -174,6 +185,7 @@ class EnumerationAlgorithm(DPccp):
         return query_enc, feat_plans
     
     def plans_to_feature_vecs(self, sql, plans, last):
+        # get the plan encodings
         parser = XMLParser(table_info=self.table_info, small_version=True)
         rows = 0
         result_featurized = []
@@ -181,6 +193,8 @@ class EnumerationAlgorithm(DPccp):
         cursor = conn.cursor()
         for plan in plans:
             need_sql = self.featurizer.append_cost(plan)
+            # to reduce the number of calls of SQL Server, we store the already calculated
+            # numbers of rows, i.e., we do not need to call SQL Server for every query
             if need_sql:
                 xml = parser.generate_from_graph(plan)
                 plan_sql = sql + " OPTION (RECOMPILE, USE PLAN N'"+xml+"')"
@@ -188,7 +202,6 @@ class EnumerationAlgorithm(DPccp):
                 try:
                     rows = cursor.execute(plan_sql).fetchall()
                 except:
-                    print(plan_sql)
                     raise Exception
                 cost_plan = rows[0][0]
                 self.featurizer.match_cost_plan(plan, cost_plan)
