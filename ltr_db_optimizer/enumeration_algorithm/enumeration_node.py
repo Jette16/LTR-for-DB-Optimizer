@@ -5,11 +5,13 @@ query_encoding_length = 6
 min_vec = np.array([0.0, 0.0, 0.0, 1.0, 5.0, 5.0])
 max_vec = np.array([1.0, 1.0, 7.0, 4.801740e+08, 6.001215e+06, 6.001215e+06])
 
+# nodes defining the enumeration plan
+
 class EnumerationNode:
     def __init__(self, name = "", left_child = None, right_child = None,
                  is_sorted = False, contained_tables = [], sorted_columns = [],
-                 unique_columns = [], output_columns = [], estimated_rows = None, # change back to None 
-                 query_encoding = None, execution_mode = "Batch", estimated_cost = 0, # only needed for bao
+                 unique_columns = [], output_columns = [], estimated_rows = None, 
+                 query_encoding = None, execution_mode = "Batch", 
                  **kwargs):                 
         self.name = name
         self.left_child = left_child
@@ -21,7 +23,6 @@ class EnumerationNode:
         self.unique_columns = unique_columns
         self.output_columns = output_columns
         self.estimated_rows = estimated_rows
-        self.estimated_cost = estimated_cost
         if query_encoding:
             self.query_encoding = query_encoding
         else:
@@ -120,7 +121,6 @@ class JoinNode(EnumerationNode):
             
         
     def calculate_query_encoding(self):
-        # new: orderby, group_by, nr_joins, estimated_rows, max. relation, min relation
         vector_left = self.left_child.get_query_encoding()
         vector_right = self.right_child.get_query_encoding()
         vector = [0] * query_encoding_length
@@ -152,7 +152,6 @@ class AggregateNode(EnumerationNode):
             self.execution_mode = "Row"
     
     def calculate_query_encoding(self):
-        # new: orderby, group_by, nr_joins, estimated_rows, max. relation, min relation, nr_columns
         vector = self.left_child.get_query_encoding()
         vector[1] = 1
         vector[3] = self.estimated_rows
@@ -175,7 +174,6 @@ class ComputeScalarNode(EnumerationNode):
         self.operations = operations
     
     def calculate_query_encoding(self):
-        # new: orderby, group_by, nr_joins, estimated_rows, max. relation, min relation, nr_columns
         self.query_encoding = self.left_child.get_query_encoding()
         self.query_encoding[3] = self.estimated_rows
         
@@ -198,7 +196,6 @@ class SortNode(EnumerationNode):
             self.estimated_rows = self.left_child.estimated_rows
     
     def calculate_query_encoding(self):
-        # new: orderby, group_by, nr_joins, estimated_rows, max. relation, min relation
         self.query_encoding = self.left_child.query_encoding
         
     def down_propagate(self):
@@ -230,7 +227,6 @@ class ScanNode(EnumerationNode):
             relation = self.table_info.get_table(self.alias).row_count
         else:
             relation = self.table_info.get_table(self.contained_tables[0]).row_count
-        # new: orderby, group_by, nr_joins, estimated_rows, max. relation, min relation, nr_columns
         self.query_encoding = [0] * query_encoding_length
         self.query_encoding[4] = relation
         self.query_encoding[5] = relation

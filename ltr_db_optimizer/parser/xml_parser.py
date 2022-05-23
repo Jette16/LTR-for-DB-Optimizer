@@ -2,6 +2,7 @@ import os
 from ltr_db_optimizer.enumeration_algorithm.table_info import TPCHTableInformation
 import ltr_db_optimizer.enumeration_algorithm.enumeration_node as nodes
 
+# Rule based parser to get a valid XML for SQL Server out of a plan (dict or graph)
 class XMLParser:
     entry_to_logical = {
         "table_scan": "Table Scan",

@@ -39,10 +39,13 @@ class Joiner:
                 
                 right_child = right
                 left_child = left
+                
+                # NLJ and merge join need row execution mode
                 row_version_right = right_child if right_child.execution_mode == "Row" else right_child.down_propagate()
                 row_version_left = left_child if left_child.execution_mode == "Row" else left_child.down_propagate()
+                # test if needs sort for merge join, construct sorted if yes
                 left_sorted, right_sorted, sorted_columns = self.get_sorted_versions(row_version_left, row_version_right, left_column, right_column)
-                # test if needs sort for merge join
+                
                 is_restricted = right_column in self.restricted or left_column in self.restricted
                 for i in range(2): 
                     result_nodes.append( 
@@ -78,7 +81,7 @@ class Joiner:
                         
                         # do also Hash and Merge Join
                     
-                    # swap variables
+                    # swap variables for changing left and right children
                     left_child, right_child = right_child, left_child
                     row_version_right, row_version_left = row_version_left, row_version_right
                     left_column, right_column = right_column, left_column
@@ -87,6 +90,7 @@ class Joiner:
     
     
     def get_join_columns(self, left_child, right_child):
+        # Get column used for joining
         for join in self.sql_query["Joins"]:
             left_table = join[0]
             right_table = join[2]
@@ -105,6 +109,7 @@ class Joiner:
                     return col_2, col_1
                 
     def get_restricted_columns(self):
+        # Get column that have only one value
         columns = []
         for filt in self.sql_query["Filter"]:
             if filt[0] == "=":
@@ -122,6 +127,7 @@ class Joiner:
     
     
     def get_sorted_versions(self, left_child, right_child, left_column, right_column):
+        # return the plan with a appended sort, if it needs sorting
         left_sorted = None
         right_sorted = None
         if left_child.is_sorted and left_column in left_child.sorted_columns:
@@ -149,7 +155,7 @@ class Joiner:
     
     def calculate_unique_cols(self, right_col, left_col, right_unique_cols, left_unique_cols):
         # I currently assume that there is only one "unique" column
-        # That is pretty ugly, I hope I can make it more beautiful
+        # This is needed to make valid plans when dealing with aggregates
         if len(right_unique_cols) == 0 and left_col not in left_unique_cols:
             return left_unique_cols
         if len(left_unique_cols) == 0 and right_col not in right_unique_cols:
@@ -166,11 +172,14 @@ class Joiner:
         
     ############# Handle scan nodes
     def get_scan(self, table_name):
+        # deal with the subquery
         if table_name.lower() == "subquery" or (table_name in self.alias_dict["Tables"].keys() and self.alias_dict["Tables"][table_name].lower() == "subquery" ):
             return self.subquery
+        
         table_name = table_name.lower()
         filt = self.filter_for_table[table_name] if table_name in self.filter_for_table.keys() else None
         alias = None
+        # get the parameters for this node
         if table_name in self.alias_dict["Tables"].keys():
             alias = self.alias_dict["Tables"][table_name]
             sorted_columns = table_name+"."+self.table_info.get_table(alias).get_first_key()
@@ -180,6 +189,7 @@ class Joiner:
             sorted_columns = self.table_info.get_table(table_name).get_first_key()
             unique_columns = self.table_info.get_table(table_name).get_keys()
             has_keys = self.table_info.get_table(table_name).has_keys() 
+        # construct the node (if an index can be used, SQL Server seems to always use an index_scan)  
         if has_keys:
             return [nodes.ScanNode("index_scan", filt, alias = alias, table_info = self.table_info,
                                    name = "index_scan", is_sorted = True, 
@@ -191,6 +201,7 @@ class Joiner:
                                    unique_columns = unique_columns)]
     
     def prepare_filters(self):
+        # logic for the filters of a scan node
         for filt in self.sql_query["Filter"]:
             if filt[0] == "in":
                 temp_dict = {

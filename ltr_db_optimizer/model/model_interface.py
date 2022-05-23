@@ -21,6 +21,7 @@ def create_model(LossFunction, **kwargs):
             ...
         
         def __init__(self, epochs = 251, sample_size = 25, batch_size = 100, name = "", folder = "", **kwargs):
+            # Use the loss function as parent
             super().__init__(sf_para_dict={"sf_id":'pointsf', "opt": None, "lr": None}, **kwargs)
             self.epochs = epochs
             self.sample_size = sample_size
@@ -39,8 +40,8 @@ def create_model(LossFunction, **kwargs):
             
         
         def fit(self, X_train_vecs, X_train_tree, y_train, X_test_vecs, X_test_trees, y_test, use_presort = False, use_scheduler = True, optimizer = "adam"):
-            input_dim_1 = 10#9#10
-            input_dim_2 = 6 #4 #3# changed: input_dim_2 = 4
+            input_dim_1 = 10
+            input_dim_2 = 6 
             self.net = LTRComparisonNet(input_dim_1, input_dim_2)
             if optimizer == "adam":
                 self.optimizer = torch.optim.Adam(self.net.parameters())
@@ -60,18 +61,19 @@ def create_model(LossFunction, **kwargs):
             
             if not os.path.exists(self.folder+"/"+self.name):
                 os.makedirs(self.folder+"/"+self.name)
-                
+            
+            # dict for storing the metric results 
             result_dict = {"epoch":[], "loss": [], "test_best_found": [], "test_top_k_as_best": [],
                            "test_avg_score": [], "test_worst_k": [], "test_avg_k": [] ,
                            "test_worst_k_best_k": [], "test_avg_best_k_of_k": []
                           }
             
-            renewed = 0
             best_found = 0
             best_k = 100
             best_avg_k = 100
             best_top_k = 100
             best_avg_top_k = 100
+            
             for epoch in range(self.epochs):
                 counter = 0
                 losses = 0
@@ -79,6 +81,7 @@ def create_model(LossFunction, **kwargs):
                 job_numbers = list(X_train_vecs.keys())
                 curr_job_numbers = random.sample(job_numbers, self.batch_size)
                 
+                # training using the training data
                 for idx, x in enumerate(curr_job_numbers):
                     curr_keys = list(X_train_vecs[x].keys())
                     length = self.sample_size if len(curr_keys) > self.sample_size else len(curr_keys)
@@ -91,6 +94,7 @@ def create_model(LossFunction, **kwargs):
                     curr_x_vec = [X_train_vecs[x][key] for key in curr_keys][0]
                     curr_y = torch.Tensor([[y_train[key] for key in curr_keys]])
                     
+                    # Should not happen, but just to be sure
                     if torch.count_nonzero(curr_y) == 0:
                         continue
                     
@@ -99,10 +103,12 @@ def create_model(LossFunction, **kwargs):
                     if use_presort:
                         curr_y, batch_ideal_desc_inds = torch.sort(curr_y, dim=1, descending=True)
                         pred_results = torch.gather(pred_results, dim=1, index=batch_ideal_desc_inds)    
-
+                    
+                    # calculate the loss using the defined loss function
                     loss = self.custom_loss_function(pred_results, curr_y, label_type = LABEL_TYPE.MultiLabel, presort = use_presort)
                     losses += loss
                     
+                # for calculating the metrics
                 found = 0
                 all_best_k_of_k = 0
                 worst_k_best_k = 0
@@ -179,6 +185,7 @@ def create_model(LossFunction, **kwargs):
                     print(f"Epoch: {epoch} Loss: {curr_loss} Best found Test: {found}/{test_len-ignored} Top k as best: {best_k_found}/{test_len-ignored} Avg. Score Best Test: {avg} Avg k: {avg_k} Worst k: {worst} Avg top k: {avg_best_k_of_k} Worst Best k: {worst_k_best_k}")
                     torch.save(self.net.state_dict(), f"{self.folder}/{self.name}/{epoch}.pth")
                 
+                # Early stopping, comment in if wished
                 #if len(avg_scores) > 100 and all([a <= avg_scores[-101] for a in avg_scores[-100:]]):
                 #    print("Early Stopping because no improvement in last 100 epochs")
                 #    break

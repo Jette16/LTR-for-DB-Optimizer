@@ -22,36 +22,38 @@ class Aggregator:
         return self.aggregation != {}
     
     def get_translated_column(self, column):
+        # For cases where the column gets another name in the aggregator or is renamed
         if column in self.agg_matcher.keys():
             return self.agg_matcher[column]
         else:
             return column
         
     def prepare_aggregate(self):
+        # prepare in the beginning what kind of aggregation is needed
         if len(self.aggregation["Group By"]):
             self.agg_dict["group_by"] = self.aggregation["Group By"]
         else:
             self.has_group_by = False
-        prefix = "aggregate"
+            
         self.agg_dict["needed_fields"] = []
         for idx,col in enumerate(self.aggregation["Outputs"]):
-            name = prefix+str(idx)
+            name = "aggregate"+str(idx)
             self.agg_dict["needed_fields"].append((col[0], col[1], col[2], name))
+            # renamed column after aggregation
             self.agg_matcher[col[0]+"("+col[2]+")"] = name        
             
     def add_aggregate(self, best_plan):
         if self.has_group_by:
             group_cols = [el[1] for el in self.agg_dict["group_by"]]
         # test if aggregate is necessary
+        # e.g., it does not seem to be necessary if we call group by on a unique column
         if self.has_group_by and len(best_plan.unique_columns) > 0:
-            #extended_columns = utils.extend_column_list(best_plan.unique_columns, best_plan.contained_tables)
-           # print(extended_columns, group_cols, best_plan.unique_columns)
-            if all([el in group_cols for el in best_plan.unique_columns]):#all([el in extended_columns for el in group_cols]) and all([col in group_cols for col in best_plan.unique_columns]):
+            if all([el in group_cols for el in best_plan.unique_columns]):
                 self.joiner.append_restricted("count(*)")
                 return self.insert_compute_scalar_without_aggregate(best_plan)
         
         aggregates = []
-        #print(self.agg_dict)
+        # get the plan with an appended sort for the stream aggregate
         if self.has_group_by:
             sorted_plan = self.return_sorted_plan(best_plan, group_cols)
         else:
@@ -64,7 +66,12 @@ class Aggregator:
         compute_scalar_output = []
         already_computed = {}
         counter = 0
+        
+        # append the needed operation for every needed field
+        
         for operation in self.agg_dict["needed_fields"]:
+            
+            # some operations like avg and sum require a succeeding compute scalar operator 
             if operation[0] in self.com_scalar_op:
                 count_str = str(counter)
                 if operation[2] in already_computed.keys():
@@ -94,7 +101,7 @@ class Aggregator:
                     
                 self.agg_matcher[operation[3]] = ["tempsum"+count_str, "tempcount"+count_str]
                 
-                
+            # the operator for count(*) has another name in SQL Server than the     
             elif operation[0].lower() == "count" and operation[2] == "*":
                 aggregate_operations.append(self.get_aggregate_operation(operation[3], "COUNT*"))
                 self.agg_matcher[operation[3]] = None
@@ -102,7 +109,7 @@ class Aggregator:
                 aggregate_operations.append(self.get_aggregate_operation(operation[3], operation[0], operation[2]))
                 self.agg_matcher[operation[3]] = operation[2]
                 
-
+        # somehow hash aggregates are not possible for imdb, not sure why. This needs further investigations.
         if not self.is_imdb:
             aggregates.append(nodes.AggregateNode("hash_aggregate", group_cols, aggregate_operations,
                                                   name = "hash_aggregate", left_child = best_plan,
@@ -112,13 +119,14 @@ class Aggregator:
                                               name = "stream_aggregate", left_child = sorted_plan, is_sorted = True,
                                               contained_tables = sorted_plan.contained_tables, sorted_columns = group_cols))
                           
-
+        # append compute scalar if needed
         if len(compute_scalar):
             aggregates = self.insert_compute_scalar(aggregates, compute_scalar)
         return aggregates
                           
     
     def return_sorted_plan(self, plan, columns):
+        # calculate a sorted plan if the plans isn't sorted already
         if not self.has_group_by:
             return plan
         if not all([o in plan.sorted_columns for o in columns]):
@@ -170,6 +178,7 @@ class Aggregator:
         return result
     
     def insert_compute_scalar_without_aggregate(self, plan):
+        # some rules for constructing a valid compute scalar node for SQL Server
         compute_scalar = []
         counter = 0
         for operation in self.agg_dict["needed_fields"]:

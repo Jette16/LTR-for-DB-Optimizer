@@ -9,271 +9,10 @@ import ltr_db_optimizer.enumeration_algorithm.enumeration_node as nodes
 table_info = TPCHTableInformation()
 
 
-
-def clear_query_element(query: dict) -> dict:
-    """
-    This function clears the query and 'deletes' unnecessary elements.
-    Example: A sort after field "X" if there is already an equality filter for this field.
-    The sort is 'deleted' for the enumeration algorithm, because we do not need to sort it.
-    
-    Only unnecessary ORDER BY or double FILTER statements are regarded. The other fields are not 'cleared'.
-    
-    :param query: The query in form of a dictionary which should be cleared.
-    :returns: The cleared query in form of a dictionary, the keys are kept! 
-    """
-    # If there are no filters or sorts: Return the query as it is
-    if "ORDER BY" not in query.keys() and "WHERE" not in query.keys():
-        return query
-    
-    # First: Copy everything from the query dict (except for "ORDER BY"/"WHERE" keys) into a new dict
-    new_query = {}
-    for key in query.keys():
-        if key != "ORDER BY" and key != "WHERE":
-            new_query[key] = query[key]
-    
-    # Clear the WHERE part
-    if "WHERE" in query.keys():
-        filter_fields = {}
-        # Group the filters by their field
-        for filt in query["WHERE"]:
-            if filt["FIELD"] in filter_fields.keys():
-                filter_fields[filt["FIELD"]].append((filt["OPERATOR"],filt["VALUE"]))
-            else:
-                filter_fields[filt["FIELD"]] = [(filt["OPERATOR"],filt["VALUE"])]
-                
-        # Check for filtered fields with more than one filter. Check if the filters contradict each other. 
-        for filt in filter_fields.keys():
-            if len(filter_fields[filt]) > 1:
-                try:
-                    temp_operation = (filter_fields[filt][0][0], filter_fields[filt][0][1])
-                    for value in filter_fields[filt][1:]:
-                        possible, temp_operation = match_operations(temp_operation[0],
-                                                                  temp_operation[1],
-                                                                  value[0],
-                                                                  value[1])
-                        # TODO: If there is a contradiction, the query returns only an empty value
-                        if not possible:
-                            raise Exception()
-                    
-                except:
-                    continue
-            else:
-                temp_operation = (filter_fields[filt][0][0], filter_fields[filt][0][1])
-            
-            if "WHERE" not in new_query.keys():
-                new_query["WHERE"] = [{"FIELD":str(filt),
-                                       "OPERATOR": temp_operation[0],
-                                       "VALUE": temp_operation[1]
-                                      }]
-            else:
-                new_query["WHERE"].append({"FIELD":str(filt),
-                                           "OPERATOR": temp_operation[0],
-                                           "VALUE": temp_operation[1]
-                                          })
-    if "ORDER BY" in query.keys():
-        filter_fields = []
-        if "WHERE" in query:
-            filter_fields = [el["FIELD"] for el in query["WHERE"] if el["OPERATOR"] == "="]
-        order_by = []
-        for order in query["ORDER BY"]:
-            # test at first, if the "ORDER BY"-key is in one of the filters
-            if order["FIELD"] in filter_fields:
-                continue
-            # if there is a group to a field which is already filtered
-            if "GROUP BY" in query.keys():
-                if all([el in filter_fields for el in query["GROUP BY"]]):
-                    break
-                to_break = False
-                for el in query["GROUP BY"]:
-                    try:
-                        # I don't think that this case is important for more than one group
-                        if len(query["GROUP BY"]) == 1:
-                            group_table = table_info.match_prefix(el.split("_")[0]+"_")
-                            if any([f in filter_fields for f in group_table.field_restrictions]):
-                                to_break = True
-                    except:
-                        continue
-
-                if to_break:
-                    continue
-                
-                
-            if "(" not in order["FIELD"]:
-                critic_fields = table_info.match_prefix(order["FIELD"].split("_")[0]+"_").field_restrictions
-                if critic_fields:
-                    if any([el in critic_fields for el in filter_fields]):
-                        continue
-            
-            order_by.append(order)     
-        if order_by:
-            new_query["ORDER BY"] = order_by
-    
-    return new_query
-
-def create_query_element(query):
-    frame = {
-        "Tables": [], 
-        "Joins": [],
-        "Aggregation": {},
-        "Sort": [],
-        "Top": None,
-        "Filter": [],
-        "Select": [],
-        "Subquery": None
-    }
-    
-    # fill tables
-    for t in query["FROM"]:
-        table_name = t.split(".")[-1].lower()
-        table = table_info.get_table(table_name)
-        prefix = table.prefix
-        
-        cols = []
-        for key in query.keys():
-            if str(key) == "FROM" or str(key) == "TOP":
-                continue
-            for el in query[key]:
-                if str(key) == "GROUP BY":
-                    if el.startswith(prefix) and el not in cols:
-                        cols.append(el)
-                elif str(key) == "WHERE_JOIN":
-                    if (table_name == el["LEFT"] or table_name == el["RIGHT"]):
-                        temp = prefix+el["FIELD"].split("_")[1]
-                        if temp not in cols:
-                            cols.append(temp)
-                else:
-                    if el["FIELD"].startswith(prefix) and el["FIELD"] not in cols:
-                        cols.append(el["FIELD"])
-        frame["Tables"].append((table_name, None)) # We do not have any aliases
-    
-    # fill joins
-    if "WHERE_JOIN" in query.keys():
-        for j in query["WHERE_JOIN"]:
-            table_1 = j["LEFT"]
-            table_2 = j["RIGHT"]
-            field = j["FIELD"].split("_")[1]
-            col_1 = table_info.get_table(table_1).prefix + field
-            col_2 = table_info.get_table(table_2).prefix + field
-            frame["Joins"].append((table_1, col_1.lower(), table_2, col_2.lower()))
-            
-    # fill aggregation
-    if "GROUP BY" in query.keys() or ("SELECT" in query.keys() and any("OPERATOR" in el.keys() for el in query["SELECT"])):
-        temp_d = {}
-        temp_d["Group By"] = []
-        temp_d["Outputs"] = []
-        if "GROUP BY" in query.keys():
-            temp_d["Type"] = "Group"
-            for i in query["GROUP BY"]:
-                temp_t = table_info.match_prefix(i.split("_")[0]+"_").table_name
-                temp_d["Group By"].append((temp_t.lower(), i.lower()))
-        else:
-            temp_d["Type"] = "All"
-        
-        if "ORDER BY" in query.keys():
-            for o in query["ORDER BY"]:
-                if "(" in o["FIELD"]:
-                    operation = o["FIELD"].split("(")[0]
-                    field =  o["FIELD"].split("(")[1].split(")")[0]
-                    temp_t = None
-                    if field != "*":
-                        temp_t = table_info.match_prefix(field.split("_")[0]+"_").table_name.lower()
-                    temp_d["Outputs"].append((operation.lower(), temp_t, field.lower()))
-                    
-        for s in query["SELECT"]:
-            if "OPERATOR" in s.keys():
-                operation = s["OPERATOR"]
-                field = s["FIELD"]
-                if field == "*":
-                    temp_t = None
-                else:
-                    temp_t = table_info.match_prefix(field.split("_")[0]+"_").table_name.lower()
-                temp_d["Outputs"].append((operation.lower(), temp_t, field.lower()))
-        
-        frame["Aggregation"] = temp_d
-        
-    # fill sort
-    if "ORDER BY" in query.keys():
-        for o in query["ORDER BY"]:
-            order = o["ORDER"]
-            if "(" in o["FIELD"]:
-                field =  o["FIELD"]
-                temp_t = "Group By"
-            else:
-                field =  o["FIELD"]
-                temp_t = table_info.match_prefix(field.split("_")[0]+"_").table_name
-            frame["Sort"].append((order.lower(), field.lower(), temp_t.lower()))
-            
-    # fill top        
-    if "TOP" in query.keys():
-        frame["Top"] = query["TOP"]
-    
-    if "WHERE" in query.keys():
-        for w in query["WHERE"]:
-            field =  w["FIELD"]
-            temp_t = table_info.match_prefix(field.split("_")[0]+"_").table_name
-            
-            if w["OPERATOR"] == "BETWEEN":                
-                op_1 = ">="
-                op_2 = "<="
-                try:
-                    temp_val_1 = float(w["VALUE"][0])
-                    temp_val_2 = float(w["VALUE"][1])
-                    if temp_val_1 < temp_val_2:
-                        val_1 = w["VALUE"][0]
-                        val_2 = w["VALUE"][1]
-                    else:
-                        val_2 = w["VALUE"][0]
-                        val_1 = w["VALUE"][1]
-                except:
-                    val_1 = w["VALUE"][0]
-                    val_2 = w["VALUE"][1]
-                frame["Filter"].append((op_1, temp_t.lower(), field.lower(), val_1))
-                frame["Filter"].append((op_2, temp_t.lower(), field.lower(), val_2))
-                continue
-                
-            operator = w["OPERATOR"]
-            if "dateadd" in w["VALUE"]:
-                val = w["VALUE"]
-                date = val.split("'")[1]
-                temp = int(val.split(",")[1])
-                if "mm" in val:
-                    val = datetime.strptime(date, "%Y-%m-%d") + relativedelta(months=temp)
-                elif "yy" in val:
-                    val = datetime.strptime(date, "%Y-%m-%d") + relativedelta(years=temp)
-                else:
-                    continue
-                val = val.strftime("%Y-%m-%d")
-                val = f"'{val}'"
-            else:
-                val = w["VALUE"]
-            frame["Filter"].append((operator, temp_t.lower(), field.lower(), val))
-        
-    # fill select
-    if "SELECT" in query.keys():
-        table_name = ""
-        if any("OPERATOR" in el.keys() for el in query["SELECT"]):
-            table_name = "Group By"
-        for s in query["SELECT"]:
-            if "OPERATOR" in s.keys():
-                field = s["OPERATOR"]+"("+s["FIELD"]+")"
-            else:
-                field = s["FIELD"]
-                if table_name != "Group By":
-                    table_name = table_info.match_prefix(field.split("_")[0]+"_").table_name
-            
-            frame["Select"].append((table_name.lower(), field.lower()))     
-
-    else: # There is a SELECT *
-        for table in frame["Tables"]:
-            t = table_info.get_table(table)
-            for column in t.get_columns():
-                frame["Select"].append((t.table_name.lower(), column.lower()))
-            
-    alias_dict = {"Fields": {}, "Tables": {}}
-    
-    return frame, alias_dict
-
 def has_subquery(query):
+    """
+    Check if a SQL Query has a subquery
+    """
     splits = query.lower().split("select ")
     if len(splits) < 3:
         return False
@@ -285,6 +24,9 @@ def has_subquery(query):
     return True
 
 def extract_subquery(query):
+    """
+    Extract a subquery from a SQL query
+    """
     # Regards only one 
     splits = re.split(r"(select)", query, flags=re.IGNORECASE)
     #print(splits)
@@ -330,6 +72,9 @@ def get_date_add(val):
     return f"'{val}'"
 
 def deal_case(statement, alias_dict):
+    """
+    Deal if case end statements in SQL Queries
+    """
     to_replace = ""
     replace_with = ""
     end = ("case", "end")
@@ -354,6 +99,9 @@ def deal_case(statement, alias_dict):
     return to_replace, replace_with            
 
 def deal_or(query):
+    """
+    Handle or's in queries' WHERE
+    """
     or_dict = {}
     
     or_statement = ""
@@ -431,6 +179,10 @@ def deal_or(query):
 
 
 def from_sql(sql, temp_table_info = None):
+    """
+    Pretty basic and not pretty SQL to dict parser. There are still some edge cases that are not covered.
+    
+    """
     global table_info
     if temp_table_info is not None:
         table_info = temp_table_info

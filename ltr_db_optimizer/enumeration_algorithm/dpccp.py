@@ -35,27 +35,27 @@ class DPccp:
             i_name = dict_name if not name_in_data else nx.get_node_attributes(self.graph, "old_name")[i]
             best_parts[dict_name] = self.joiner.get_scan(i_name)
         
-        for csg, cmp in self.get_csg_cmp_pairs():
+        for csg, cmp in self.get_csg_cmp_pairs(): # iterate through all csg and cmp pairs
             csg_name = self.to_name(csg)
             cmp_name = self.to_name(cmp)
             full_name = self.to_name(csg, cmp)
+            
+            # ensure that the subtrees are already calculated
             assert csg_name in best_parts
             assert cmp_name in best_parts
             
-            # wenn nicht länge 1
-            # filtern für beste gefundene Lösung von csg und cmp
-            # alle möglichen Varianten (verschiedene Join Types und cmp-csg vs. csg-cmp) einfügen in best_parts[full_name]
-            if csg_name in best_parts:
-                if len(best_parts[csg_name]) > self.top_k:
-                    best_parts[csg_name] = self.reduce(best_parts[csg_name])
-                right = best_parts[csg_name]
+            
+            # prune csg if necessary
+            if len(best_parts[csg_name]) > self.top_k:
+                best_parts[csg_name] = self.reduce(best_parts[csg_name])
+            right = best_parts[csg_name]
+             
+            # prune cmp if necessary
+            if len(best_parts[cmp_name]) > self.top_k:
+                best_parts[cmp_name] = self.reduce(best_parts[cmp_name])
+            left = best_parts[cmp_name]
                 
-            if cmp_name in best_parts:
-                if len(best_parts[cmp_name]) > self.top_k:
-                    best_parts[cmp_name] = self.reduce(best_parts[cmp_name])
-                
-                left = best_parts[cmp_name]
-                
+            # call join-handler to get all possible joins
             possible_joins = self.joiner.get_join_possibilities(right, left)
             
             if full_name not in best_parts.keys():
@@ -64,18 +64,18 @@ class DPccp:
                 best_parts[full_name].extend(possible_joins)
                 
             full = full_name
-        # gib besten Subplan zurück
+        # return best k subplans (since there is one step in enumeration algorithm left, it is not called with k=0)
         if len(best_parts[full]) > self.top_k:
-            return self.reduce(best_parts[full])#[0]
+            return self.reduce(best_parts[full])
         else:
             return best_parts[full]
     
     def reduce(self, plans, last = False):
-        # hier noch model einfügen
+        # random pruning if there is no model given
         if self.model is None:
             return random.sample(plans, self.top_k)
         else:
-            # should be the same sql for all
+            # get graph plans in tree-shape
             prepared_plans = self.prepare_plans(plans, last)
             assert len(prepared_plans) == 2
             if len(prepared_plans[1]) == 1:
@@ -87,6 +87,7 @@ class DPccp:
                 
     
     def prepare_plans(self, plans):
+        # dummy function, correct must be implemented in enumeration algorithm
         return plans
         
     def get_csg_cmp_pairs(self):
